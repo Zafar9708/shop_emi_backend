@@ -490,6 +490,110 @@ const getCustomerByMobile = async (req, res) => {
   }
 };
 
+
+const getCustomerStats = async (req, res) => {
+  try {
+    // Get current date for monthly calculations
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    // Get all counts
+    const totalCustomers = await Customer.countDocuments();
+    const newCustomersThisMonth = await Customer.countDocuments({
+      createdAt: { $gte: startOfMonth }
+    });
+    const newCustomersThisWeek = await Customer.countDocuments({
+      createdAt: { $gte: startOfWeek }
+    });
+    const newCustomersThisYear = await Customer.countDocuments({
+      createdAt: { $gte: startOfYear }
+    });
+
+    // Get customers with devices
+    const customersWithDevices = await Customer.aggregate([
+      {
+        $lookup: {
+          from: 'devices',
+          localField: '_id',
+          foreignField: 'customerId',
+          as: 'devices'
+        }
+      },
+      {
+        $project: {
+          name: 1,
+          mobile: 1,
+          deviceCount: { $size: '$devices' },
+          totalDeviceValue: { $sum: '$devices.price' }
+        }
+      }
+    ]);
+
+    const customersWithDevicesCount = customersWithDevices.filter(c => c.deviceCount > 0).length;
+    const customersWithoutDevicesCount = customersWithDevices.filter(c => c.deviceCount === 0).length;
+
+    // Get top 5 customers by device value
+    const topCustomers = customersWithDevices
+      .sort((a, b) => b.totalDeviceValue - a.totalDeviceValue)
+      .slice(0, 5);
+
+    // Get monthly customer registration trend (last 6 months)
+    const monthlyTrend = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+      const count = await Customer.countDocuments({
+        createdAt: { $gte: monthStart, $lte: monthEnd }
+      });
+      monthlyTrend.push({
+        month: monthStart.toLocaleString('default', { month: 'short' }),
+        year: monthStart.getFullYear(),
+        count
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        total: totalCustomers,
+        newThisMonth: newCustomersThisMonth,
+        newThisWeek: newCustomersThisWeek,
+        newThisYear: newCustomersThisYear,
+        withDevices: customersWithDevicesCount,
+        withoutDevices: customersWithoutDevicesCount
+      },
+      topCustomers,
+      monthlyTrend
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Get total customers count only (simple endpoint)
+// @route   GET /api/customers/total
+const getTotalCustomersCount = async (req, res) => {
+  try {
+    const total = await Customer.countDocuments();
+    res.json({
+      success: true,
+      total
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 module.exports = {
   addCustomer,
   getAllCustomers,
@@ -497,5 +601,7 @@ module.exports = {
   updateCustomer,
   deleteCustomer,
   searchCustomer,
-  getCustomerByMobile
+  getCustomerByMobile,
+  getCustomerStats,      
+  getTotalCustomersCount 
 };

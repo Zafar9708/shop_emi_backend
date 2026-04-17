@@ -628,7 +628,347 @@ const getDeviceStats = async (req, res) => {
     });
   }
 };
+// controllers/deviceController.js
+// Add these new functions before module.exports
 
+// @desc    Get all locked devices
+// @route   GET /api/devices/locked
+const getLockedDevices = async (req, res) => {
+  try {
+    const devices = await Device.find({ isLocked: true })
+      .populate('customerId', 'name mobile email address')
+      .sort('-lastLockedAt');
+    
+    // Calculate total value of locked devices
+    const totalLockedValue = devices.reduce((sum, device) => sum + device.price, 0);
+    
+    res.json({
+      success: true,
+      count: devices.length,
+      totalValue: totalLockedValue,
+      devices: devices.map(device => ({
+        id: device._id,
+        imei: device.imei,
+        deviceName: device.deviceName,
+        brand: device.brand,
+        model: device.model,
+        price: device.price,
+        isLocked: device.isLocked,
+        status: device.status,
+        lastLockedAt: device.lastLockedAt,
+        createdAt: device.createdAt,
+        customer: device.customerId ? {
+          id: device.customerId._id,
+          name: device.customerId.name,
+          mobile: device.customerId.mobile,
+          email: device.customerId.email,
+          address: device.customerId.address
+        } : null
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
+  }
+};
+
+// @desc    Get all unlocked devices (active devices)
+// @route   GET /api/devices/unlocked
+const getUnlockedDevices = async (req, res) => {
+  try {
+    const devices = await Device.find({ isLocked: false, status: 'active' })
+      .populate('customerId', 'name mobile email address')
+      .sort('-createdAt');
+    
+    // Calculate total value of unlocked devices
+    const totalUnlockedValue = devices.reduce((sum, device) => sum + device.price, 0);
+    
+    res.json({
+      success: true,
+      count: devices.length,
+      totalValue: totalUnlockedValue,
+      devices: devices.map(device => ({
+        id: device._id,
+        imei: device.imei,
+        deviceName: device.deviceName,
+        brand: device.brand,
+        model: device.model,
+        price: device.price,
+        isLocked: device.isLocked,
+        status: device.status,
+        lastUnlockedAt: device.lastUnlockedAt,
+        createdAt: device.createdAt,
+        customer: device.customerId ? {
+          id: device.customerId._id,
+          name: device.customerId.name,
+          mobile: device.customerId.mobile,
+          email: device.customerId.email,
+          address: device.customerId.address
+        } : null
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
+  }
+};
+
+// @desc    Get devices by lock status with pagination and search
+// @route   GET /api/devices/filter?status=locked&page=1&limit=10&search=
+const getDevicesByLockStatus = async (req, res) => {
+  try {
+    const { status, page = 1, limit = 10, search = '' } = req.query;
+    
+    // Validate status
+    if (!['locked', 'unlocked', 'all'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Use: locked, unlocked, or all'
+      });
+    }
+    
+    // Build query
+    let query = {};
+    if (status === 'locked') {
+      query.isLocked = true;
+    } else if (status === 'unlocked') {
+      query.isLocked = false;
+      query.status = 'active';
+    }
+    
+    // Add search functionality
+    if (search) {
+      query.$or = [
+        { deviceName: { $regex: search, $options: 'i' } },
+        { imei: { $regex: search, $options: 'i' } },
+        { brand: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await Device.countDocuments(query);
+    
+    const devices = await Device.find(query)
+      .populate('customerId', 'name mobile email address')
+      .sort(status === 'locked' ? '-lastLockedAt' : '-createdAt')
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Calculate total value of filtered devices
+    const totalValue = devices.reduce((sum, device) => sum + device.price, 0);
+    
+    res.json({
+      success: true,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      },
+      summary: {
+        totalDevices: total,
+        totalValue: totalValue,
+        averagePrice: total > 0 ? totalValue / total : 0
+      },
+      devices: devices.map(device => ({
+        id: device._id,
+        imei: device.imei,
+        deviceName: device.deviceName,
+        brand: device.brand,
+        model: device.model,
+        price: device.price,
+        isLocked: device.isLocked,
+        status: device.status,
+        lastLockedAt: device.lastLockedAt,
+        lastUnlockedAt: device.lastUnlockedAt,
+        createdAt: device.createdAt,
+        customer: device.customerId ? {
+          id: device.customerId._id,
+          name: device.customerId.name,
+          mobile: device.customerId.mobile,
+          email: device.customerId.email,
+          address: device.customerId.address
+        } : null
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
+  }
+};
+
+// @desc    Get lock/unlock statistics
+// @route   GET /api/devices/lock-stats
+const getLockStats = async (req, res) => {
+  try {
+    // Get counts
+    const totalDevices = await Device.countDocuments();
+    const lockedDevices = await Device.countDocuments({ isLocked: true });
+    const unlockedDevices = await Device.countDocuments({ isLocked: false, status: 'active' });
+    const completedDevices = await Device.countDocuments({ status: 'completed' });
+    
+    // Get recent locks (last 7 days)
+    const last7Days = new Date();
+    last7Days.setDate(last7Days.getDate() - 7);
+    
+    const recentLocks = await Device.countDocuments({
+      isLocked: true,
+      lastLockedAt: { $gte: last7Days }
+    });
+    
+    // Get most locked devices (devices that have been locked multiple times)
+    // Note: This requires tracking lock history, for now just get locked devices
+    const mostLockedDevices = await Device.find({ isLocked: true })
+      .populate('customerId', 'name mobile')
+      .sort('-lastLockedAt')
+      .limit(5);
+    
+    // Calculate percentage
+    const lockPercentage = totalDevices > 0 ? (lockedDevices / totalDevices) * 100 : 0;
+    
+    res.json({
+      success: true,
+      stats: {
+        total: totalDevices,
+        locked: lockedDevices,
+        unlocked: unlockedDevices,
+        completed: completedDevices,
+        lockPercentage: parseFloat(lockPercentage.toFixed(2)),
+        recentLocks: recentLocks
+      },
+      recentLockedDevices: mostLockedDevices.map(device => ({
+        id: device._id,
+        deviceName: device.deviceName,
+        imei: device.imei,
+        price: device.price,
+        lockedAt: device.lastLockedAt,
+        customer: device.customerId ? {
+          name: device.customerId.name,
+          mobile: device.customerId.mobile
+        } : null
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
+  }
+};
+
+// @desc    Get devices by customer with lock status filter
+// @route   GET /api/devices/customer/:customerId/locked?status=locked
+const getCustomerDevicesByLockStatus = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { status } = req.query; // 'locked', 'unlocked', 'all'
+    
+    // Check if customer exists
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    // Build query
+    let query = { customerId };
+    if (status === 'locked') {
+      query.isLocked = true;
+    } else if (status === 'unlocked') {
+      query.isLocked = false;
+    }
+    
+    const devices = await Device.find(query)
+      .sort('-createdAt');
+    
+    const lockedCount = devices.filter(d => d.isLocked).length;
+    const unlockedCount = devices.filter(d => !d.isLocked).length;
+    const totalValue = devices.reduce((sum, d) => sum + d.price, 0);
+    
+    res.json({
+      success: true,
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        mobile: customer.mobile
+      },
+      summary: {
+        totalDevices: devices.length,
+        lockedDevices: lockedCount,
+        unlockedDevices: unlockedCount,
+        totalValue: totalValue
+      },
+      devices: devices.map(device => ({
+        id: device._id,
+        imei: device.imei,
+        deviceName: device.deviceName,
+        brand: device.brand,
+        model: device.model,
+        price: device.price,
+        isLocked: device.isLocked,
+        status: device.status,
+        lastLockedAt: device.lastLockedAt,
+        lastUnlockedAt: device.lastUnlockedAt,
+        createdAt: device.createdAt
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
+  }
+};
+
+const getDeviceById = async (req, res) => {
+  try {
+    const device = await Device.findById(req.params.id)
+      .populate('customerId', 'name mobile email address aadharNumber panNumber');
+    
+    if (!device) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Device not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      device: {
+        id: device._id,
+        imei: device.imei,
+        deviceName: device.deviceName,
+        brand: device.brand,
+        model: device.model,
+        price: device.price,
+        isLocked: device.isLocked,
+        status: device.status,
+        lastLockedAt: device.lastLockedAt,
+        lastUnlockedAt: device.lastUnlockedAt,
+        createdAt: device.createdAt,
+        customer: device.customerId
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+};
+
+
+
+// Update module.exports to include new functions
 module.exports = {
   addDevice,
   getAllDevices,
@@ -638,5 +978,13 @@ module.exports = {
   getDeviceStatus,
   updateDevice,
   deleteDevice,
-  getDeviceStats
+  getDeviceStats,
+  getLockedDevices,           // Add this
+  getUnlockedDevices,         // Add this
+  getDevicesByLockStatus,     // Add this
+  getLockStats,               // Add this
+  getCustomerDevicesByLockStatus, // Add this
+  getDeviceById  // Add this
+
+
 };

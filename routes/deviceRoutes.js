@@ -43,7 +43,13 @@ const {
   getDeviceStatus,
   updateDevice,
   deleteDevice,
-  getDeviceStats
+  getDeviceStats,
+  getLockedDevices,              // Add this
+  getUnlockedDevices,            // Add this
+  getDevicesByLockStatus,        // Add this
+  getLockStats,                  // Add this
+  getCustomerDevicesByLockStatus,
+  getDeviceById // Add this
 } = require('../controllers/deviceController');
 const { protect, isOwner } = require('../middleware/auth');
 const { uploadMultiple } = require('../config/cloudinary');
@@ -56,13 +62,26 @@ router.get('/status/:imei', getDeviceStatus);
 // Protected routes (Owner only)
 router.use(protect, isOwner);
 
+
+// Specific routes (must come before /:id)
+router.get('/stats', getDeviceStats);
+router.get('/locked', getLockedDevices);                    // Get all locked devices
+router.get('/unlocked', getUnlockedDevices);                // Get all unlocked devices
+router.get('/filter', getDevicesByLockStatus);              // Filter by lock status with pagination
+router.get('/lock-stats', getLockStats);                    // Get lock/unlock statistics
+router.get('/customer/:customerId/locked', getCustomerDevicesByLockStatus); // Customer devices by lock status
+
+
 router.post('/add', uploadMultiple, addDevice);
 router.get('/', getAllDevices);
 router.get('/stats', getDeviceStats);
+router.get('/:id', protect, isOwner, getDeviceById);
+
 router.get('/customer/:customerId', getDevicesByCustomer);
 router.post('/lock/:id', lockDevice);
 router.post('/unlock/:id', unlockDevice);
 router.put('/:id', updateDevice);
 router.delete('/:id', deleteDevice);
+
 
 module.exports = router;
