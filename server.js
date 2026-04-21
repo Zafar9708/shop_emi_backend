@@ -18,6 +18,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.use(cors({
+  origin: '*', // for testing
+}));
+
+app.use(cors({
+  origin: [
+    "https://shop-emi-frontend-4of3.vercel.app"
+  ],
+  credentials: true
+}));
+
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/customers', require('./routes/customerRoutes'));
